@@ -78,8 +78,9 @@ namespace Loupedeck.TimerPlugin.Services
                 {
                     // Only create defaults if config file doesn't exist at all
                     _configuration = CreateDefaultConfiguration();
-                    // Don't save defaults immediately - let user modify first
-                    PluginLog.Info("Created default timer configuration");
+                    // Save defaults so they're available immediately
+                    SaveConfiguration();
+                    PluginLog.Info("Created and saved default timer configuration");
                 }
             }
             catch (Exception ex)

@@ -1,8 +1,6 @@
 namespace Loupedeck.TimerPlugin.Actions
 {
     using System;
-    using System.Collections.Generic;
-    using System.Linq;
     using System.Timers;
     using Loupedeck;
     using Loupedeck.TimerPlugin.Services;
@@ -16,10 +14,6 @@ namespace Loupedeck.TimerPlugin.Actions
         private TimerPreset _currentTimer;
         private bool _isRunning;
 
-        // Track timer IDs and display names
-        private readonly Dictionary<string, string> _timerIds = new Dictionary<string, string>();
-        private readonly Dictionary<string, string> _timerDisplayNames = new Dictionary<string, string>();
-
         public ConfiguredTimer()
             : base()
         {
@@ -31,11 +25,19 @@ namespace Loupedeck.TimerPlugin.Actions
             this._countdownTimer.Elapsed += this.OnCountdownTick;
             this._countdownTimer.AutoReset = true;
 
-            // Subscribe to configuration changes
-            TimerConfigurationService.Instance.ConfigurationChanged += this.OnConfigurationChanged;
+            // Try to load parameters - service may not be initialized yet
+            this.TryUpdateParameters();
 
-            // Load initial parameters
-            this.ScanAndUpdateTimers();
+            // Subscribe to configuration changes (will work once service is initialized)
+            try
+            {
+                TimerConfigurationService.Instance.ConfigurationChanged += this.OnConfigurationChanged;
+            }
+            catch (InvalidOperationException)
+            {
+                // Service not initialized yet, that's OK - it will be subscribed later
+                PluginLog.Info("TimerConfigurationService not ready for event subscription, will retry later");
+            }
         }
 
         private void OnConfigurationChanged(object sender, EventArgs e)
@@ -51,16 +53,16 @@ namespace Loupedeck.TimerPlugin.Actions
                 // Service still not ready
             }
 
-            this.ScanAndUpdateTimers();
+            this.TryUpdateParameters();
             this.ActionImageChanged();
         }
 
         public void RefreshParameters()
         {
-            this.ScanAndUpdateTimers();
+            this.TryUpdateParameters();
         }
 
-        private void ScanAndUpdateTimers()
+        private void TryUpdateParameters()
         {
             try
             {
@@ -71,53 +73,23 @@ namespace Loupedeck.TimerPlugin.Actions
                     return;
                 }
 
-                var config = TimerConfigurationService.Instance.GetConfiguration();
-                var currentTimerIds = new HashSet<string>();
+                this.RemoveAllParameters();
 
-                PluginLog.Info($"Scanning {config.Timers.Count} timers from configuration");
-                
-                // Add parameters for each active timer
+                // Add each configured timer as a separate parameter
+                var config = TimerConfigurationService.Instance.GetConfiguration();
+                PluginLog.Info($"Loading {config.Timers.Count} timers from configuration");
+
                 foreach (var timer in config.Timers)
                 {
+                    PluginLog.Info($"Timer: {timer.Name}, Active: {timer.IsActive}, ID: {timer.Id}");
                     if (timer.IsActive)
                     {
-                        currentTimerIds.Add(timer.Id);
-                        
-                        // Format: HH:MM:SS display
-                        var duration = $"{timer.Hours:D2}:{timer.Minutes:D2}:{timer.Seconds:D2}";
-                        var displayName = $"{timer.Name} ({duration})";
-                        
-                        if (!this._timerIds.ContainsKey(timer.Id))
-                        {
-                            // Add each timer as a parameter
-                            this.AddParameter(timer.Id, displayName, this.GroupName);
-                            this._timerIds[timer.Id] = timer.Id;
-                            this._timerDisplayNames[timer.Id] = displayName;
-                            PluginLog.Info($"Added timer parameter: {timer.Id} - {displayName}");
-                        }
-                        else
-                        {
-                            // Update parameter if name changed  
-                            this.RemoveParameter(timer.Id);
-                            this.AddParameter(timer.Id, displayName, this.GroupName);
-                            this._timerDisplayNames[timer.Id] = displayName;
-                            PluginLog.Info($"Updated timer parameter: {timer.Id} - {displayName}");
-                        }
+                        PluginLog.Info($"Adding timer parameter: {timer.Id} - {timer.Name}");
+                        this.AddParameter(timer.Id, timer.Name, "Configured Timers");
                     }
                 }
 
-                // Remove parameters for timers that are no longer active or were deleted
-                var removedTimers = this._timerIds.Keys.Except(currentTimerIds).ToList();
-                foreach (var timerId in removedTimers)
-                {
-                    this.RemoveParameter(timerId);
-                    this._timerIds.Remove(timerId);
-                    this._timerDisplayNames.Remove(timerId);
-                    PluginLog.Info($"Removed timer parameter: {timerId}");
-                }
-
                 PluginLog.Info("Timer parameters updated successfully");
-                this.ActionImageChanged();
             }
             catch (Exception ex)
             {
@@ -130,7 +102,7 @@ namespace Loupedeck.TimerPlugin.Actions
             // Parse the selected timer
             var config = TimerConfigurationService.Instance.GetConfiguration();
             _currentTimer = config.Timers.Find(t => t.Id == actionParameter);
-            
+
             if (_currentTimer == null)
             {
                 PluginLog.Error($"Timer not found: {actionParameter}");
@@ -192,7 +164,7 @@ namespace Loupedeck.TimerPlugin.Actions
             if (_currentTimer != null && _currentTimer.Id == actionParameter && _isRunning && _remainingMilliseconds > 0)
             {
                 var remainingTime = TimeSpan.FromMilliseconds(_remainingMilliseconds);
-                
+
                 // Format based on image size
                 if (imageSize == PluginImageSize.Width60)
                 {
@@ -234,13 +206,13 @@ namespace Loupedeck.TimerPlugin.Actions
 
             var elapsed = (int)(DateTime.Now - this._startTime).TotalMilliseconds;
             this._remainingMilliseconds = Math.Max(0, _currentTimer.GetTotalMilliseconds() - elapsed);
-            
+
             if (this._remainingMilliseconds <= 0)
             {
                 this._countdownTimer.Stop();
                 this._isRunning = false;
             }
-            
+
             this.ActionImageChanged();
         }
     }
